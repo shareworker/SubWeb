@@ -818,6 +818,8 @@ export default {
           this.$message.error(result.message)
           return false
         }
+        // 已探测过该后端，避免 customBackend 的 watch 再次探测并覆盖结果
+        this.probedBackend = result.form.customBackend
         if (info) this.applyBackendInfo(info)
         this.form = result.form
         this.customParams = result.customParams
