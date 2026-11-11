@@ -584,10 +584,11 @@ export default {
     backendType(type, previous) {
       this.lastClientTypeByFamily[previous] = this.form.clientType;
       const targets = Object.values(getClientTypes(type));
-      if (!targets.includes(this.form.clientType)) {
-        const remembered = this.lastClientTypeByFamily[type];
-        this.form.clientType = targets.includes(remembered) ? remembered
-          : targets.includes(CONSTANTS.DEFAULT_CLIENT_TYPE) ? CONSTANTS.DEFAULT_CLIENT_TYPE : targets[0];
+      const remembered = this.lastClientTypeByFamily[type];
+      if (targets.includes(remembered)) {
+        this.form.clientType = remembered;
+      } else if (!targets.includes(this.form.clientType)) {
+        this.form.clientType = targets.includes(CONSTANTS.DEFAULT_CLIENT_TYPE) ? CONSTANTS.DEFAULT_CLIENT_TYPE : targets[0];
       }
       // 来源前缀只有 SubConverter-Extended 识别，离开时去掉以免传统后端解析失败
       if (previous === BACKEND_TYPES.SCE) {
