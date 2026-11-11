@@ -821,6 +821,8 @@ export default {
         }
         // 已探测过该后端，避免 customBackend 的 watch 再次探测并覆盖结果
         this.probedBackend = result.form.customBackend
+        // backendType 的 watch 在本次赋值后才执行，先记下导入的 target，避免被上次选择覆盖
+        this.lastClientTypeByFamily[backendType] = result.form.clientType
         if (info) this.applyBackendInfo(info)
         this.form = result.form
         this.customParams = result.customParams

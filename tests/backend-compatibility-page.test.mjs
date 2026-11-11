@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { after, test } from 'node:test'
 import { createServer } from 'vite'
-import { computed as vueComputed, reactive, watch } from 'vue'
+import { computed as vueComputed, nextTick, reactive, watch } from 'vue'
 
 const server = await createServer({ server: { middlewareMode: true, ws: false, watch: null }, optimizeDeps: { noDiscovery: true, include: [] }, appType: 'custom' })
 after(() => server.close())
@@ -25,7 +25,7 @@ function createPage() {
   return vm
 }
 
-// 注册页面 watch（同步触发），用于验证依赖 watch 的响应式流程
+// 注册页面 watch（与组件一样异步调度，需 await nextTick()），用于验证依赖 watch 的响应式流程
 function createReactivePage() {
   const vm = reactive({ ...page.data(), messages: [] })
   vm.$message = { success() {}, warning() {}, error: message => vm.messages.push(message) }
@@ -42,44 +42,67 @@ function createReactivePage() {
     .map(([path, option]) => {
       const handler = typeof option === 'function' ? option : option.handler
       const source = () => path.split('.').reduce((value, key) => value[key], vm)
-      return watch(source, handler.bind(vm), { deep: option.deep === true, flush: 'sync' })
+      return watch(source, handler.bind(vm), { deep: option.deep === true })
     })
   after(() => stops.forEach(stop => stop()))
   return vm
 }
 
-test('切换后端类型时恢复各后端上次选择的客户端，并去掉 SCE 来源前缀', () => {
+test('切换后端类型时恢复各后端上次选择的客户端，并去掉 SCE 来源前缀', async () => {
   const vm = createReactivePage()
   vm.backendInfo = { family: 'sce', version: 'SubConverter-Extended v1.11.4' }
+  await nextTick()
   vm.form.clientType = 'stash'
   vm.form.sourceSubUrl = 'tag:HK,interval:300,https://source.example/A'
 
   vm.backendTypeOverride = 'legacy'
+  await nextTick()
   assert.equal(vm.form.clientType, 'clash', 'legacy 没有 stash，回到 legacy 上次的选择')
   assert.equal(vm.form.sourceSubUrl, 'https://source.example/A', '离开 SCE 时去掉前缀')
 
   vm.backendTypeOverride = ''
+  await nextTick()
   assert.equal(vm.form.clientType, 'stash', '回到 SCE 时恢复 stash')
 })
 
-test('SCE 进阶模式下来源编辑器与订阅链接双向同步', () => {
+test('导入链接切换后端类型时保留链接自身的 target', async () => {
+  const vm = createReactivePage()
+  vm.backendInfo = { family: 'sce', version: 'SubConverter-Extended v1.11.4' }
+  await nextTick()
+  vm.form.clientType = 'stash'
+  vm.backendInfo = { family: 'legacy', version: '' }
+  await nextTick()
+  assert.equal(vm.form.clientType, 'clash')
+
+  vm.$axios = { get: async () => ({ data: '<title>SubConverter-Extended</title>v1.11.4' }) }
+  vm.loadConfig = 'http://127.0.0.1:25500/sub?target=surge&ver=4&url=https%3A%2F%2Fa.example'
+  assert.equal(await vm.confirmLoadConfig(), true)
+  await nextTick()
+  assert.equal(vm.backendType, 'sce')
+  assert.equal(vm.form.clientType, 'surge&ver=4')
+})
+
+test('SCE 进阶模式下来源编辑器与订阅链接双向同步', async () => {
   const vm = createReactivePage()
   vm.form.sourceSubUrl = 'tag:HK,https://source.example/A'
   vm.advanced = '2'
   vm.backendInfo = { family: 'sce', version: 'SubConverter-Extended v1.11.4' }
+  await nextTick()
   assert.equal(vm.sourceEditorActive, true)
   assert.equal(vm.sourceItems[0].tag, 'HK')
   assert.equal(vm.sourceItems[0].url, 'https://source.example/A')
 
   vm.sourceItems[0].interval = '300'
+  await nextTick()
   assert.equal(vm.form.sourceSubUrl, 'tag:HK,interval:300,https://source.example/A')
 })
 
-test('设置 SCE emoji 后清空 add_emoji/remove_emoji', () => {
+test('设置 SCE emoji 后清空 add_emoji/remove_emoji', async () => {
   const vm = createReactivePage()
   vm.form.sce.addEmoji = 'true'
   vm.form.sce.removeEmoji = 'false'
   vm.form.sce.emoji = 'true'
+  await nextTick()
   assert.equal(vm.form.sce.addEmoji, '')
   assert.equal(vm.form.sce.removeEmoji, '')
 })
