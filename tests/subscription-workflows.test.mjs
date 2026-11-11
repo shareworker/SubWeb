@@ -318,3 +318,7 @@ test('backend version URL is derived from every supported backend form', async (
     assert.equal(requested, expected)
   }
 })
+
+// 后端兼容性（SCE / 肥羊 / 原版）的模块级回归测试
+await import('./backend-compatibility.test.mjs')
+await import('./backend-compatibility-page.test.mjs')

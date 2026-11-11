@@ -32,7 +32,7 @@ jobs:
       run: yarn lint
 
     - name: Run regression tests
-      run: node --test tests/subscription-workflows.test.mjs
+      run: node --test "tests/**/*.test.mjs"
 
     - name: Build
       run: yarn build
