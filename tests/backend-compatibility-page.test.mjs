@@ -15,7 +15,14 @@ function createPage() {
   }
   for (const [name, method] of Object.entries(page.methods)) vm[name] = method.bind(vm)
   for (const [name, computed] of Object.entries(page.computed)) {
-    Object.defineProperty(vm, name, { get: () => computed.call(vm) })
+    if (typeof computed === 'function') {
+      Object.defineProperty(vm, name, { get: () => computed.call(vm) })
+    } else {
+      Object.defineProperty(vm, name, {
+        get: () => computed.get.call(vm),
+        set: (value) => computed.set.call(vm, value)
+      })
+    }
   }
   vm.$message.error = message => vm.messages.push(message)
   vm.copyToClipboard = async () => true
@@ -31,8 +38,10 @@ function createReactivePage() {
   vm.$message = { success() {}, warning() {}, error: message => vm.messages.push(message) }
   for (const [name, method] of Object.entries(page.methods)) vm[name] = method.bind(vm)
   for (const [name, computed] of Object.entries(page.computed)) {
-    const ref = vueComputed(() => computed.call(vm))
-    Object.defineProperty(vm, name, { get: () => ref.value })
+    const ref = typeof computed === 'function'
+      ? vueComputed(() => computed.call(vm))
+      : vueComputed({ get: () => computed.get.call(vm), set: (value) => computed.set.call(vm, value) })
+    Object.defineProperty(vm, name, { get: () => ref.value, set: (value) => { ref.value = value } })
   }
   vm.form.clientType = 'clash'
   vm.form.customBackend = 'http://127.0.0.1:25500/sub?'
@@ -161,7 +170,11 @@ test('SCE 后端生成的链接不含 legacy 专属参数，来源前缀被校�
   assert.equal(url.searchParams.get('tls13'), null)
   for (const name of ['new_name', 'clash.doh', 'insert', 'scv', 'udp', 'sort']) assert.equal(url.searchParams.get(name), null, name)
   assert.equal(url.searchParams.get('emoji'), null, 'SCE 的 emoji 由 sce.emoji 控制')
-  assert.equal(url.searchParams.get('url'), 'tag:HK,interval:300,https://source.example/A|proxy_direct:true,https://source.example/B')
+  // list 展开模式下后端不生成 proxy-providers，provider/interval/proxy_direct 会被拒绝，只保留 tag
+  assert.equal(url.searchParams.get('url'), 'tag:HK,https://source.example/A|https://source.example/B')
+  assert.equal(vm.suppressedSourceModifierCount, 2, 'interval 与 proxy_direct 被抑制')
+  assert.equal(vm.sourceModifierAvailable('interval', vm.sourceItems[0]), false)
+  assert.equal(vm.sourceModifierAvailable('tag', vm.sourceItems[0]), true)
 
   // 切到 ss：前缀与仅 clash 系支持的 list 都会被忽略
   vm.form.clientType = 'ss'
@@ -193,6 +206,32 @@ test('SCE 后端拒绝非法参数组合，不生成链接', () => {
   vm.form.sce.interval = 'abc'
   vm.makeUrlClick()
   assert.deepEqual(vm.messages[1], '更新间隔必须是非负整数（秒）')
+})
+
+test('SCE provider 模式（list 未开）保留全部来源前缀', () => {
+  const vm = createPage()
+  vm.backendInfo = { family: 'sce', version: 'SubConverter-Extended v1.11.4' }
+  vm.form.sce.list = ''
+  vm.form.sourceSubUrl = 'tag:HK,provider:vip,interval:300,proxy_direct:true,https://source.example/A'
+  vm.advanced = '2'
+  vm.makeUrlClick()
+  const url = new URL(vm.customSubUrl)
+  assert.equal(url.searchParams.get('url'), 'tag:HK,provider:vip,interval:300,proxy_direct:true,https://source.example/A')
+  assert.equal(vm.suppressedSourceModifierCount, 0)
+})
+
+test('后端类型自动识别时下拉显示识别结果而非占位符', async () => {
+  const vm = createPage()
+  vm.$axios = { get: async () => ({ data: '<html>SubConverter-Extended</html><div class="info-value">v1.11.4</div>' }) }
+  vm.form.customBackend = 'http://127.0.0.1:25500/sub?'
+  await vm.probeBackend()
+  assert.equal(vm.backendTypeOverride, '')
+  assert.equal(vm.backendTypeModel, 'auto', '自动识别使用非空哨兵值')
+  assert.equal(vm.autoBackendLabel, '自动识别（SubConverter-Extended）')
+  vm.backendTypeModel = 'legacy'
+  assert.equal(vm.backendTypeOverride, 'legacy', '手动选择写回 override')
+  vm.backendTypeModel = 'auto'
+  assert.equal(vm.backendTypeOverride, '')
 })
 
 test('解析链接时按链接自身后端识别类型', async () => {

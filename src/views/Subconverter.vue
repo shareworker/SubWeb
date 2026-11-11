@@ -61,8 +61,8 @@
                   </el-autocomplete>
                 </el-form-item>
                 <el-form-item label="后端类型:">
-                  <el-select v-model="backendTypeOverride" style="width: 100%">
-                    <el-option :label="autoBackendLabel" value="" />
+                  <el-select v-model="backendTypeModel" style="width: 100%">
+                    <el-option :label="autoBackendLabel" value="auto" />
                     <el-option v-for="type in backendTypeChoices" :key="type" :label="backendLabels[type]" :value="type" />
                   </el-select>
                   <div v-if="backendMismatch" class="form-hint">
@@ -349,7 +349,7 @@ import {
 
 // 导入配置
 import { CONSTANTS } from '@/config/constants';
-import { getClientTypes } from '@/config/client-types';
+import { getClientTypes, baseTarget } from '@/config/client-types';
 import { REMOTE_CONFIGS } from '@/config/remote-configs';
 import { BACKEND_TYPES, BACKEND_LABELS, effectiveBackendType } from '@/config/backend-types';
 import {
@@ -509,6 +509,24 @@ export default {
       return this.backendType === BACKEND_TYPES.SCE
     },
 
+    // el-select 把空字符串视为未选择而显示占位符，自动识别用非空哨兵值
+    backendTypeModel: {
+      get() {
+        return this.backendTypeOverride || 'auto'
+      },
+      set(value) {
+        this.backendTypeOverride = value === 'auto' ? '' : value
+      }
+    },
+
+    // SCE 的 Clash/ClashR 在 list 展开模式下不生成 proxy-providers，
+    // provider/interval/proxy_direct 前缀会被后端拒绝
+    sourceProviderMode() {
+      if (!this.isSceBackend) return true
+      if (!['clash', 'clashr'].includes(baseTarget(this.form.clientType))) return true
+      return this.form.sce?.list !== 'true'
+    },
+
     autoBackendLabel() {
       const family = this.backendInfo?.family
       return family ? `自动识别（${BACKEND_LABELS[family]}）` : '自动识别（未连接，按原版处理）'
@@ -529,7 +547,7 @@ export default {
     },
 
     suppressedSourceModifierCount() {
-      return countSuppressedSourceModifiers(this.sourceItems, this.form.clientType)
+      return countSuppressedSourceModifiers(this.sourceItems, this.form.clientType, this.sourceProviderMode)
     },
 
     sceTextParams() {
@@ -685,9 +703,9 @@ export default {
         if (error) return { error }
         if (this.form.sourceSubUrl.trim()) {
           const items = parseSourceItems(this.form.sourceSubUrl)
-          const sourceError = validateSourceItems(items, this.form.clientType)
+          const sourceError = validateSourceItems(items, this.form.clientType, this.sourceProviderMode)
           if (sourceError) return { error: sourceError }
-          const sources = serializeSourceItems(items, this.form.clientType)
+          const sources = serializeSourceItems(items, this.form.clientType, this.sourceProviderMode)
           form = { ...this.form, sourceSubUrl: sources }
         }
       }
@@ -723,7 +741,7 @@ export default {
     },
 
     sourceModifierAvailable(key, item) {
-      return modifierAvailable(key, this.form.clientType, item.url)
+      return modifierAvailable(key, this.form.clientType, item.url, this.sourceProviderMode)
     },
 
     emojiDetailDisabled(key) {

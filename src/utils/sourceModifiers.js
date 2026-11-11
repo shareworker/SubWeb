@@ -23,6 +23,9 @@ const TARGET_SUPPORT = {
 
 const REMOTE_ONLY = new Set(['provider', 'interval', 'proxyDirect'])
 
+// 仅在生成 Clash/ClashR proxy-providers 时有效（SCE 的 list 展开模式下后端会拒绝）
+const PROVIDER_MODE_ONLY = new Set(['provider', 'interval', 'proxyDirect'])
+
 const LABELS = {
   tag: '来源标签',
   provider: '远程资源名称',
@@ -75,7 +78,8 @@ function isRemoteSubscriptionSource(value) {
   return !source || /^https?:\/\//i.test(source)
 }
 
-export function modifierAvailable(key, target, source = '') {
+export function modifierAvailable(key, target, source = '', providerMode = true) {
+  if (!providerMode && PROVIDER_MODE_ONLY.has(key)) return false
   const supported = TARGET_SUPPORT[key]?.includes(baseTarget(target)) === true
   return supported && (!REMOTE_ONLY.has(key) || isRemoteSubscriptionSource(source))
 }
@@ -95,7 +99,7 @@ function validatePrefixText(value, label, index) {
 const UNPARSED_PREFIX = /^(tag|provider|interval|proxy_direct)\s*:/i
 
 /** 校验来源条目，返回错误信息；通过时返回空串。 */
-export function validateSourceItems(items, target) {
+export function validateSourceItems(items, target, providerMode = true) {
   if (!Array.isArray(items) || items.length === 0) {
     return '请先输入至少一条订阅链接或节点'
   }
@@ -110,7 +114,7 @@ export function validateSourceItems(items, target) {
     }
     for (const key of MODIFIER_KEYS) {
       const value = String(item[key] || '').trim()
-      if (!value || !modifierAvailable(key, targetName, item.url)) continue
+      if (!value || !modifierAvailable(key, targetName, item.url, providerMode)) continue
       if (key === 'interval') {
         if (!/^\d+$/.test(value)) {
           return `第 ${index + 1} 条来源的更新间隔必须是非负整数`
@@ -136,11 +140,11 @@ export function validateSourceItems(items, target) {
 }
 
 /** target 为 null 时保留全部前缀（用于表单暂存），否则只保留该 target 可用的前缀。 */
-export function serializeSourceItem(item, target = null) {
+export function serializeSourceItem(item, target = null, providerMode = true) {
   const prefixes = []
   const push = (key, raw) => {
     const value = String(raw || '').trim()
-    if (value && (target === null || modifierAvailable(key, target, item.url))) {
+    if (value && (target === null || modifierAvailable(key, target, item.url, providerMode))) {
       prefixes.push(`${key === 'proxyDirect' ? 'proxy_direct' : key}:${value}`)
     }
   }
@@ -151,10 +155,10 @@ export function serializeSourceItem(item, target = null) {
   return [...prefixes, String(item.url || '').trim()].join(',')
 }
 
-export function serializeSourceItems(items, target) {
-  const error = validateSourceItems(items, target)
+export function serializeSourceItems(items, target, providerMode = true) {
+  const error = validateSourceItems(items, target, providerMode)
   if (error) throw new TypeError(error)
-  return items.map((item) => serializeSourceItem(item, target)).join('\n')
+  return items.map((item) => serializeSourceItem(item, target, providerMode)).join('\n')
 }
 
 export function hasSourceModifiers(items) {
@@ -168,13 +172,13 @@ export function serializePlainSourceItems(items) {
     .join('\n')
 }
 
-export function countSuppressedSourceModifiers(items, target) {
+export function countSuppressedSourceModifiers(items, target, providerMode = true) {
   return (items || []).reduce(
     (count, item) =>
       count +
       MODIFIER_KEYS.filter((key) => {
         const value = String(item?.[key] || '').trim()
-        return value && !modifierAvailable(key, target, item?.url)
+        return value && !modifierAvailable(key, target, item?.url, providerMode)
       }).length,
     0
   )

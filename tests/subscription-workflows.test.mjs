@@ -21,7 +21,14 @@ function createPage() {
   }
   for (const [name, method] of Object.entries(page.methods)) vm[name] = method.bind(vm)
   for (const [name, computed] of Object.entries(page.computed)) {
-    Object.defineProperty(vm, name, { get: () => computed.call(vm) })
+    if (typeof computed === 'function') {
+      Object.defineProperty(vm, name, { get: () => computed.call(vm) })
+    } else {
+      Object.defineProperty(vm, name, {
+        get: () => computed.get.call(vm),
+        set: (value) => computed.set.call(vm, value)
+      })
+    }
   }
   vm.$message.error = message => vm.messages.push(message)
   vm.copyToClipboard = async () => true
