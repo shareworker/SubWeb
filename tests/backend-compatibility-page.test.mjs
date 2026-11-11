@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { after, test } from 'node:test'
 import { createServer } from 'vite'
+import { computed as vueComputed, reactive, watch } from 'vue'
 
 const server = await createServer({ server: { middlewareMode: true, ws: false, watch: null }, optimizeDeps: { noDiscovery: true, include: [] }, appType: 'custom' })
 after(() => server.close())
@@ -23,6 +24,65 @@ function createPage() {
   vm.form.sourceSubUrl = 'https://source.example/A'
   return vm
 }
+
+// 注册页面 watch（同步触发），用于验证依赖 watch 的响应式流程
+function createReactivePage() {
+  const vm = reactive({ ...page.data(), messages: [] })
+  vm.$message = { success() {}, warning() {}, error: message => vm.messages.push(message) }
+  for (const [name, method] of Object.entries(page.methods)) vm[name] = method.bind(vm)
+  for (const [name, computed] of Object.entries(page.computed)) {
+    const ref = vueComputed(() => computed.call(vm))
+    Object.defineProperty(vm, name, { get: () => ref.value })
+  }
+  vm.form.clientType = 'clash'
+  vm.form.customBackend = 'http://127.0.0.1:25500/sub?'
+  vm.form.sourceSubUrl = 'https://source.example/A'
+  const stops = Object.entries(page.watch)
+    .filter(([path]) => path !== 'form.customBackend')
+    .map(([path, option]) => {
+      const handler = typeof option === 'function' ? option : option.handler
+      const source = () => path.split('.').reduce((value, key) => value[key], vm)
+      return watch(source, handler.bind(vm), { deep: option.deep === true, flush: 'sync' })
+    })
+  after(() => stops.forEach(stop => stop()))
+  return vm
+}
+
+test('切换后端类型时恢复各后端上次选择的客户端，并去掉 SCE 来源前缀', () => {
+  const vm = createReactivePage()
+  vm.backendInfo = { family: 'sce', version: 'SubConverter-Extended v1.11.4' }
+  vm.form.clientType = 'stash'
+  vm.form.sourceSubUrl = 'tag:HK,interval:300,https://source.example/A'
+
+  vm.backendTypeOverride = 'legacy'
+  assert.equal(vm.form.clientType, 'clash', 'legacy 没有 stash，回到 legacy 上次的选择')
+  assert.equal(vm.form.sourceSubUrl, 'https://source.example/A', '离开 SCE 时去掉前缀')
+
+  vm.backendTypeOverride = ''
+  assert.equal(vm.form.clientType, 'stash', '回到 SCE 时恢复 stash')
+})
+
+test('SCE 进阶模式下来源编辑器与订阅链接双向同步', () => {
+  const vm = createReactivePage()
+  vm.form.sourceSubUrl = 'tag:HK,https://source.example/A'
+  vm.advanced = '2'
+  vm.backendInfo = { family: 'sce', version: 'SubConverter-Extended v1.11.4' }
+  assert.equal(vm.sourceEditorActive, true)
+  assert.equal(vm.sourceItems[0].tag, 'HK')
+  assert.equal(vm.sourceItems[0].url, 'https://source.example/A')
+
+  vm.sourceItems[0].interval = '300'
+  assert.equal(vm.form.sourceSubUrl, 'tag:HK,interval:300,https://source.example/A')
+})
+
+test('设置 SCE emoji 后清空 add_emoji/remove_emoji', () => {
+  const vm = createReactivePage()
+  vm.form.sce.addEmoji = 'true'
+  vm.form.sce.removeEmoji = 'false'
+  vm.form.sce.emoji = 'true'
+  assert.equal(vm.form.sce.addEmoji, '')
+  assert.equal(vm.form.sce.removeEmoji, '')
+})
 
 test('未识别的后端按原版处理，客户端列表保持 16 项', () => {
   const vm = createPage()
