@@ -135,6 +135,7 @@ export function validateSourceItems(items, target) {
   return ''
 }
 
+/** target 为 null 时保留全部前缀（用于表单暂存），否则只保留该 target 可用的前缀。 */
 export function serializeSourceItem(item, target = null) {
   const prefixes = []
   const push = (key, raw) => {

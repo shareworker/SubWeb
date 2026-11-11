@@ -72,7 +72,6 @@ export function countActiveSceParams(sce, target) {
   return count
 }
 
-
 /** 统计已填写但当前 target 不支持的参数数量（生成时会被忽略）。 */
 export function countSuppressedSceParams(sce, target) {
   let count = 0

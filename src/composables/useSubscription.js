@@ -196,8 +196,7 @@ export function useSubscription(defaultBackend = '') {
       form[field] = params.get(param) || ''
     }
     if (isSce(backendType)) {
-      // SCE 不支持的参数回填到 legacy 字段，切回传统后端时仍可用
-      // SCE 不支持的参数回填到 legacy 字段（解码后存储，切回传统后端可重新编码）
+      // SCE 不支持的参数解码后回填到 legacy 字段，切回传统后端时可重新编码
       for (const field of ['groups', 'ruleset']) {
         const raw = params.get(field)
         if (raw) form[field] = (fromUrlSafeBase64(raw) || raw).split('@').join('\n')
