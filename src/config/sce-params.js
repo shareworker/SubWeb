@@ -72,18 +72,6 @@ export function countActiveSceParams(sce, target) {
   return count
 }
 
-/** 校验 SCE 参数组合，返回错误信息；通过时返回空串。 */
-export function validateSceParams(sce, target) {
-  const available = new Set(availableSceBooleanParams(target).map((def) => def.key))
-  if (available.has('script') && available.has('expand') && sce.script === 'true' && sce.expand === 'true') {
-    return 'Clash Script 与内联展开规则集不能同时开启'
-  }
-  const interval = String(sce.interval || '').trim()
-  if (interval && !/^\d+$/.test(interval)) {
-    return '更新间隔必须是非负整数（秒）'
-  }
-  return ''
-}
 
 /** 统计已填写但当前 target 不支持的参数数量（生成时会被忽略）。 */
 export function countSuppressedSceParams(sce, target) {

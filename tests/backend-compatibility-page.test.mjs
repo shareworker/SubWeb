@@ -127,9 +127,21 @@ test('解析链接时按链接自身后端识别类型', async () => {
   assert.equal(vm.backendInfo.family, 'sce')
   assert.equal(vm.form.sce.list, 'true')
   assert.equal(vm.form.sce.udp, 'false')
-  assert.equal(vm.form.groups, 'QUJD')
+  assert.equal(vm.form.groups, 'ABC', 'SCE 链接中的 groups 已解码')
   assert.deepEqual(vm.customParams, [])
   assert.equal(vm.sourceItems[0].url, 'https://a.example')
+})
+
+test('链接后端探测失败时保留当前后端类型解析', async () => {
+  const vm = createPage()
+  vm.backendInfo = { family: 'sce', version: 'SubConverter-Extended v1.11.4' }
+  vm.$axios = { get: async () => { throw new Error('Network Error') } }
+  vm.loadConfig = 'http://127.0.0.1:25500/sub?target=clash&url=https%3A%2F%2Fa.example&list=true&udp=false'
+  const ok = await vm.confirmLoadConfig()
+  assert.equal(ok, true)
+  assert.equal(vm.form.sce.list, 'true', '按当前 SCE 类型解析')
+  assert.equal(vm.form.sce.udp, 'false')
+  assert.deepEqual(vm.customParams, [])
 })
 
 test('传统后端解析 groups/ruleset 并在高级参数中回填', async () => {

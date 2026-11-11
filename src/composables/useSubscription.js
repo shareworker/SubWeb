@@ -197,8 +197,10 @@ export function useSubscription(defaultBackend = '') {
     }
     if (isSce(backendType)) {
       // SCE 不支持的参数回填到 legacy 字段，切回传统后端时仍可用
+      // SCE 不支持的参数回填到 legacy 字段（解码后存储，切回传统后端可重新编码）
       for (const field of ['groups', 'ruleset']) {
-        if (params.has(field)) form[field] = params.get(field)
+        const raw = params.get(field)
+        if (raw) form[field] = (fromUrlSafeBase64(raw) || raw).split('@').join('\n')
       }
       form.new_name = params.get('new_name') !== 'false'
       parseSceParams(params, form.sce)

@@ -61,7 +61,8 @@ export function parseSourceItem(value) {
     remainder = remainder.slice(comma + 1).trim()
     parsed = true
   }
-  if (parsed && remainder) item.url = remainder
+  // 前缀解析后剩余部分即 URL；即使为空也要覆盖，避免把 "tag:HK," 当成 URL
+  if (parsed) item.url = remainder
   return item
 }
 
@@ -86,45 +87,54 @@ export function minimumSourceInterval(target) {
 function validatePrefixText(value, label, index) {
   const normalized = String(value || '').trim()
   if (normalized.includes(',') || normalized.includes('|') || /[\r\n\0\x7f]/.test(normalized)) {
-    throw new TypeError(`第 ${index + 1} 条来源的${label}不能包含逗号、竖线或控制字符`)
+    return `第 ${index + 1} 条来源的${label}不能包含逗号、竖线或控制字符`
   }
+  return ''
 }
 
+const UNPARSED_PREFIX = /^(tag|provider|interval|proxy_direct)\s*:/i
+
+/** 校验来源条目，返回错误信息；通过时返回空串。 */
 export function validateSourceItems(items, target) {
   if (!Array.isArray(items) || items.length === 0) {
-    throw new TypeError('请先输入至少一条订阅链接或节点')
+    return '请先输入至少一条订阅链接或节点'
   }
   const targetName = baseTarget(target)
   for (const [index, item] of items.entries()) {
-    if (!item.url?.trim()) {
-      throw new TypeError(`第 ${index + 1} 条来源缺少 URL 或节点`)
+    const url = String(item?.url || '').trim()
+    if (!url) {
+      return `第 ${index + 1} 条来源缺少 URL 或节点`
+    }
+    if (UNPARSED_PREFIX.test(url)) {
+      return `第 ${index + 1} 条来源的前缀格式不正确，前缀值需要以逗号分隔`
     }
     for (const key of MODIFIER_KEYS) {
       const value = String(item[key] || '').trim()
       if (!value || !modifierAvailable(key, targetName, item.url)) continue
       if (key === 'interval') {
         if (!/^\d+$/.test(value)) {
-          throw new TypeError(`第 ${index + 1} 条来源的更新间隔必须是非负整数`)
+          return `第 ${index + 1} 条来源的更新间隔必须是非负整数`
         }
         const interval = Number(value)
         if (!Number.isSafeInteger(interval) || interval > 2147483647) {
-          throw new TypeError(`第 ${index + 1} 条来源的更新间隔超出允许范围`)
+          return `第 ${index + 1} 条来源的更新间隔超出允许范围`
         }
         if (interval < minimumSourceInterval(targetName)) {
-          throw new TypeError(`第 ${index + 1} 条来源的更新间隔必须大于 0`)
+          return `第 ${index + 1} 条来源的更新间隔必须大于 0`
         }
       } else if (key === 'proxyDirect') {
         if (!['true', 'false'].includes(value)) {
-          throw new TypeError(`第 ${index + 1} 条来源的 Provider 出口值无效`)
+          return `第 ${index + 1} 条来源的 Provider 出口值无效`
         }
       } else {
-        validatePrefixText(value, LABELS[key], index)
+        const error = validatePrefixText(value, LABELS[key], index)
+        if (error) return error
       }
     }
   }
+  return ''
 }
 
-/** target 为 null 时保留全部前缀（用于表单暂存），否则只保留该 target 可用的前缀。 */
 export function serializeSourceItem(item, target = null) {
   const prefixes = []
   const push = (key, raw) => {
@@ -141,7 +151,8 @@ export function serializeSourceItem(item, target = null) {
 }
 
 export function serializeSourceItems(items, target) {
-  validateSourceItems(items, target)
+  const error = validateSourceItems(items, target)
+  if (error) throw new TypeError(error)
   return items.map((item) => serializeSourceItem(item, target)).join('\n')
 }
 

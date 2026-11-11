@@ -357,9 +357,9 @@ import {
   availableSceBooleanParams,
   countActiveSceParams,
   countSuppressedSceParams,
-  isEmojiDetailDisabled,
-  validateSceParams
+  isEmojiDetailDisabled
 } from '@/config/sce-params';
+import { validateSceParams } from '@/utils/validators';
 
 // 导入Composables
 import { useSubscriptionForm, addCustomParam, saveSubUrl as saveSubscriptionUrl } from '@/composables/useSubscriptionForm';
@@ -378,7 +378,8 @@ import {
   serializePlainSourceItems,
   hasSourceModifiers,
   modifierAvailable,
-  countSuppressedSourceModifiers
+  countSuppressedSourceModifiers,
+  validateSourceItems
 } from '@/utils/sourceModifiers'
 
 // 导入服务
@@ -681,12 +682,11 @@ export default {
         const error = validateSceParams(this.form.sce, this.form.clientType)
         if (error) return { error }
         if (this.form.sourceSubUrl.trim()) {
-          try {
-            const sources = serializeSourceItems(parseSourceItems(this.form.sourceSubUrl), this.form.clientType)
-            form = { ...this.form, sourceSubUrl: sources }
-          } catch (e) {
-            return { error: e.message }
-          }
+          const items = parseSourceItems(this.form.sourceSubUrl)
+          const sourceError = validateSourceItems(items, this.form.clientType)
+          if (sourceError) return { error: sourceError }
+          const sources = serializeSourceItems(items, this.form.clientType)
+          form = { ...this.form, sourceSubUrl: sources }
         }
       }
       const url = this.makeUrl(form, this.advanced, this.customParams, this.backendType)
@@ -810,14 +810,15 @@ export default {
         const url = await ShortUrlService.resolveUrl(this.loadConfig)
         // 先识别链接所指后端，再按对应规则解析参数
         const info = this.parseUrl(url).success ? await BackendService.probeBackend(this.$axios, url) : null
-        const backendType = this.backendTypeOverride || effectiveBackendType(info?.family)
+        // 探测失败时保留当前后端类型，避免把 SCE 链接按 legacy 规则误解析
+        const backendType = this.backendTypeOverride ||
+          (info ? effectiveBackendType(info.family) : this.backendType)
         const result = this.parseUrl(url, backendType)
         if (!result.success) {
           this.$message.error(result.message)
           return false
         }
-        this.probedBackend = result.form.customBackend
-        this.applyBackendInfo(info)
+        if (info) this.applyBackendInfo(info)
         this.form = result.form
         this.customParams = result.customParams
         if (backendType === BACKEND_TYPES.SCE) this.syncSourceItemsFromForm()

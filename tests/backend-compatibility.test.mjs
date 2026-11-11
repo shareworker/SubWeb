@@ -11,6 +11,7 @@ const { toUrlSafeBase64, fromUrlSafeBase64 } = await server.ssrLoadModule('/src/
 const { useSubscription, createSubscriptionForm, createSceParams } = await server.ssrLoadModule('/src/composables/useSubscription.js')
 const modifiers = await server.ssrLoadModule('/src/utils/sourceModifiers.js')
 const sceParams = await server.ssrLoadModule('/src/config/sce-params.js')
+const { validateSceParams } = await server.ssrLoadModule('/src/utils/validators.js')
 const { BackendService } = await server.ssrLoadModule('/src/services/backendService.js')
 
 const { makeUrl, parseUrl } = useSubscription('https://sub.example/sub?')
@@ -144,7 +145,7 @@ test('SCE 解析丢弃 groups/ruleset/new_name，但回填 legacy 字段以便�
   assert.equal(result.success, true)
   assert.deepEqual(result.customParams, [])
   assert.equal(result.form.sce.list, 'true')
-  assert.equal(result.form.groups, 'QUJD')
+  assert.equal(result.form.groups, 'ABC', 'groups 按 legacy 规则解码后回填')
   assert.equal(result.form.new_name, false)
 })
 
@@ -185,6 +186,7 @@ test('URL-safe Base64 处理 UTF-8 与填充', () => {
 
 test('来源前缀解析、序列化与校验', () => {
   const items = modifiers.parseSourceItems('tag:HK,provider:vip,interval:300,proxy_direct:true,https://a.example/sub\nss://node')
+  assert.equal(modifiers.parseSourceItems('tag:HK,')[0].url, '', '只有前缀没有 URL 时 URL 为空')
   assert.equal(items.length, 2)
   const { url: _url, ...modifiersOfFirst } = items[0]
   assert.deepEqual(modifiersOfFirst, { tag: 'HK', provider: 'vip', interval: '300', proxyDirect: 'true' })
@@ -205,22 +207,25 @@ test('来源前缀解析、序列化与校验', () => {
   assert.throws(() => modifiers.serializeSourceItems([{ url: 'https://a.example', interval: '-1' }], 'clash'), /更新间隔/)
   assert.throws(() => modifiers.serializeSourceItems([{ url: 'https://a.example', proxyDirect: 'yes' }], 'clash'), /出口值无效/)
   assert.throws(() => modifiers.serializeSourceItems([{ url: '', tag: 'x' }], 'clash'), /缺少/)
+  assert.equal(modifiers.validateSourceItems([{ url: 'tag:HK' }], 'clash'), '第 1 条来源的前缀格式不正确，前缀值需要以逗号分隔')
+  assert.equal(modifiers.validateSourceItems([{ url: '' }], 'clash'), '第 1 条来源缺少 URL 或节点')
+  assert.equal(modifiers.validateSourceItems([{ url: 'https://a.example' }], 'clash'), '')
   assert.equal(modifiers.minimumSourceInterval('surge'), 1)
   assert.equal(modifiers.minimumSourceInterval('clash'), 0)
 })
 
 test('SCE 参数校验：script 与 expand 互斥', () => {
   const sce = createSceParams()
-  assert.equal(sceParams.validateSceParams(sce, 'clash'), '')
+  assert.equal(validateSceParams(sce, 'clash'), '')
   sce.script = 'true'
   sce.expand = 'true'
-  assert.match(sceParams.validateSceParams(sce, 'clash'), /不能同时开启/)
-  assert.equal(sceParams.validateSceParams(sce, 'quanx'), '', '非 clash/clashr 不限制')
+  assert.match(validateSceParams(sce, 'clash'), /不能同时开启/)
+  assert.equal(validateSceParams(sce, 'quanx'), '', '非 clash/clashr 不限制')
   sce.expand = ''
   sce.interval = '1.5'
-  assert.match(sceParams.validateSceParams(sce, 'clash'), /更新间隔/)
+  assert.match(validateSceParams(sce, 'clash'), /更新间隔/)
   sce.interval = '60'
-  assert.equal(sceParams.validateSceParams(sce, 'clash'), '')
+  assert.equal(validateSceParams(sce, 'clash'), '')
 })
 
 test('emoji 设置后禁用 Emoji 细节参数', () => {
