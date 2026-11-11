@@ -10,12 +10,22 @@ function toBackendUrl(value) {
   return base + '/sub?'
 }
 
+/** 后端预设列表：逗号或换行分隔，统一成 /sub? 形式。 */
+function parseBackendOptions(value) {
+  if (!value) return []
+  return String(value)
+    .split(/[\n,]/)
+    .map((item) => toBackendUrl(item.trim()))
+    .filter(Boolean)
+}
+
 export const CONSTANTS = {
   PROJECT: getRuntimeConfig('VITE_PROJECT', env.VITE_PROJECT),
   REMOTE_CONFIG_SAMPLE: getRuntimeConfig('VITE_SUBCONVERTER_REMOTE_CONFIG', env.VITE_SUBCONVERTER_REMOTE_CONFIG),
   DOC_ADVANCED: getRuntimeConfig('VITE_SUBCONVERTER_DOC_ADVANCED', env.VITE_SUBCONVERTER_DOC_ADVANCED),
   BACKEND_RELEASE: getRuntimeConfig('VITE_BACKEND_RELEASE', env.VITE_BACKEND_RELEASE),
   DEFAULT_BACKEND: toBackendUrl(getRuntimeConfig('VITE_SUBCONVERTER_DEFAULT_BACKEND', env.VITE_SUBCONVERTER_DEFAULT_BACKEND)),
+  BACKEND_OPTIONS: parseBackendOptions(getRuntimeConfig('VITE_BACKEND_OPTIONS', env.VITE_BACKEND_OPTIONS)),
   SHORT_URL_API: getRuntimeConfig('VITE_MYURLS_API', env.VITE_MYURLS_API),
   CONFIG_UPLOAD_API: getRuntimeConfig('VITE_CONFIG_UPLOAD_API', env.VITE_CONFIG_UPLOAD_API),
   BOT_LINK: getRuntimeConfig('VITE_BOT_LINK', env.VITE_BOT_LINK),

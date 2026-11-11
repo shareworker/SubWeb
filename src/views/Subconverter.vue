@@ -401,11 +401,12 @@ export default {
   },
   data() {
     const subscriptionForm = useSubscriptionForm();
+    const presetBackends = [...new Set([CONSTANTS.DEFAULT_BACKEND, ...CONSTANTS.BACKEND_OPTIONS].filter(Boolean))];
 
     return {
       // 配置选项
       options: {
-        backendOptions: [{ value: CONSTANTS.DEFAULT_BACKEND || "http://127.0.0.1:25500/sub?" }],
+        backendOptions: presetBackends.length ? presetBackends.map((value) => ({ value })) : [{ value: "http://127.0.0.1:25500/sub?" }],
         remoteConfig: REMOTE_CONFIGS
       },
 
