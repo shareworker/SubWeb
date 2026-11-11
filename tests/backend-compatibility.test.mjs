@@ -1,4 +1,8 @@
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { after, test } from 'node:test'
 import { createServer } from 'vite'
 
@@ -13,6 +17,7 @@ const modifiers = await server.ssrLoadModule('/src/utils/sourceModifiers.js')
 const sceParams = await server.ssrLoadModule('/src/config/sce-params.js')
 const { validateSceParams } = await server.ssrLoadModule('/src/utils/validators.js')
 const { BackendService } = await server.ssrLoadModule('/src/services/backendService.js')
+const { parseBackendOptions } = await server.ssrLoadModule('/src/config/constants.js')
 
 const { makeUrl, parseUrl } = useSubscription('https://sub.example/sub?')
 const SCE = BACKEND_TYPES.SCE
@@ -234,4 +239,24 @@ test('emoji 设置后禁用 Emoji 细节参数', () => {
   sce.emoji = 'false'
   assert.equal(sceParams.isEmojiDetailDisabled(sce, 'addEmoji'), true)
   assert.equal(sceParams.isEmojiDetailDisabled(sce, 'udp'), false)
+})
+
+test('Docker 运行时配置中换行分隔的后端预设拆成多项', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'subweb-config-'))
+  const output = join(dir, 'config.js')
+  const script = readFileSync('docker/40-subweb-config.sh', 'utf8').replace('/usr/share/nginx/html/config.js', output)
+  writeFileSync(join(dir, 'entry.sh'), script)
+  execFileSync('sh', [join(dir, 'entry.sh')], {
+    env: { PATH: process.env.PATH, VITE_BACKEND_OPTIONS: 'https://one.example/sub?\nhttps://two.example' }
+  })
+  const window = {}
+  new Function('window', readFileSync(output, 'utf8'))(window)
+  assert.deepEqual(parseBackendOptions(window.__SUB_WEB_CONFIG__.VITE_BACKEND_OPTIONS), [
+    'https://one.example/sub?',
+    'https://two.example/sub?'
+  ])
+  assert.deepEqual(parseBackendOptions('https://one.example, https://two.example/sub'), [
+    'https://one.example/sub?',
+    'https://two.example/sub'
+  ])
 })

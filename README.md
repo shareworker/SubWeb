@@ -120,7 +120,7 @@ docker run -d \
 | 变量 | 说明 |
 |------|------|
 | `VITE_SUBCONVERTER_DEFAULT_BACKEND` | 默认 subconverter 地址，可写裸域名、`/sub` 或 `/sub?` |
-| `VITE_BACKEND_OPTIONS` | 后端预设列表（逗号分隔），出现在自定义后端的下拉建议中 |
+| `VITE_BACKEND_OPTIONS` | 后端预设列表（逗号或换行分隔），出现在自定义后端的下拉建议中 |
 | `VITE_MYURLS_API` | 短链接接口 |
 | `VITE_CONFIG_UPLOAD_API` | 配置上传接口 |
 | `VITE_PROJECT` | 项目链接 |

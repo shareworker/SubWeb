@@ -10,11 +10,11 @@ function toBackendUrl(value) {
   return base + '/sub?'
 }
 
-/** 后端预设列表：逗号或换行分隔，统一成 /sub? 形式。 */
-function parseBackendOptions(value) {
+/** 后端预设列表：逗号或空白（含换行）分隔，统一成 /sub? 形式。 */
+export function parseBackendOptions(value) {
   if (!value) return []
   return String(value)
-    .split(/[\n,]/)
+    .split(/[\s,]+/)
     .map((item) => toBackendUrl(item.trim()))
     .filter(Boolean)
 }
