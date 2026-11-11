@@ -401,7 +401,7 @@ export default {
   },
   data() {
     const subscriptionForm = useSubscriptionForm();
-    const presetBackends = [...new Set([CONSTANTS.DEFAULT_BACKEND, ...CONSTANTS.BACKEND_OPTIONS].filter(Boolean))];
+    const presetBackends = [...new Set([CONSTANTS.DEFAULT_BACKEND, ...CONSTANTS.BACKEND_PRESETS, ...CONSTANTS.BACKEND_OPTIONS].filter(Boolean))];
 
     return {
       // 配置选项
