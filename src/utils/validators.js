@@ -1,3 +1,23 @@
+import { availableSceBooleanParams } from '@/config/sce-params'
+
+/**
+ * 校验 SubConverter-Extended 参数组合，返回错误信息；通过时返回空串。
+ * @param {Object} sce - SCE 参数（文本为空串、布尔为 ''/'true'/'false'）
+ * @param {string} target - 当前客户端 target
+ * @returns {string} 错误信息
+ */
+export const validateSceParams = (sce, target) => {
+  const available = new Set(availableSceBooleanParams(target).map((def) => def.key))
+  if (available.has('script') && available.has('expand') && sce.script === 'true' && sce.expand === 'true') {
+    return 'Clash Script 与内联展开规则集不能同时开启'
+  }
+  const interval = String(sce.interval || '').trim()
+  if (interval && !/^\d+$/.test(interval)) {
+    return '更新间隔必须是非负整数（秒）'
+  }
+  return ''
+}
+
 /**
  * 验证订阅链接格式
  * @param {string} url - 订阅链接

@@ -71,6 +71,9 @@ yarn dev
 # Subconverter 后端地址（可写裸域名、/sub 或 /sub?）
 VITE_SUBCONVERTER_DEFAULT_BACKEND=https://api.wcc.best
 
+# 附加后端预设（逗号分隔，内置预设之外的扩展项）
+VITE_BACKEND_OPTIONS=https://sub1.example.com/sub?,https://sub2.example.com/sub?
+
 # 项目与社区链接
 VITE_PROJECT=https://github.com/CareyWang/sub-web
 VITE_BOT_LINK=https://t.me/subconverter_discuss
@@ -117,6 +120,7 @@ docker run -d \
 | 变量 | 说明 |
 |------|------|
 | `VITE_SUBCONVERTER_DEFAULT_BACKEND` | 默认 subconverter 地址，可写裸域名、`/sub` 或 `/sub?` |
+| `VITE_BACKEND_OPTIONS` | 附加后端预设（逗号或换行分隔），内置两个后端预设之外的扩展 |
 | `VITE_MYURLS_API` | 短链接接口 |
 | `VITE_CONFIG_UPLOAD_API` | 配置上传接口 |
 | `VITE_PROJECT` | 项目链接 |

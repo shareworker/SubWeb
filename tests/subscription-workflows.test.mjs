@@ -21,7 +21,14 @@ function createPage() {
   }
   for (const [name, method] of Object.entries(page.methods)) vm[name] = method.bind(vm)
   for (const [name, computed] of Object.entries(page.computed)) {
-    Object.defineProperty(vm, name, { get: () => computed.call(vm) })
+    if (typeof computed === 'function') {
+      Object.defineProperty(vm, name, { get: () => computed.call(vm) })
+    } else {
+      Object.defineProperty(vm, name, {
+        get: () => computed.get.call(vm),
+        set: (value) => computed.set.call(vm, value)
+      })
+    }
   }
   vm.$message.error = message => vm.messages.push(message)
   vm.copyToClipboard = async () => true
@@ -318,3 +325,7 @@ test('backend version URL is derived from every supported backend form', async (
     assert.equal(requested, expected)
   }
 })
+
+// 后端兼容性（SCE / 肥羊 / 原版）的模块级回归测试
+await import('./backend-compatibility.test.mjs')
+await import('./backend-compatibility-page.test.mjs')

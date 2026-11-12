@@ -47,7 +47,8 @@ jobs:
   e2e:
     name: E2E
     needs: build
-    runs-on: ubuntu-latest
+    # ubuntu-latest(26.04) 镜像 apt 源 DNS 解析失败导致 Playwright 依赖安装失败，暂固定 24.04
+    runs-on: ubuntu-24.04
 
     steps:
     - uses: actions/checkout@v7
@@ -68,7 +69,8 @@ jobs:
         path: dist/
 
     - name: Install Playwright browser
-      run: npx playwright install --with-deps chromium
+      # GitHub runner 解析 ubuntu 源偶发 DNS 故障时降级为仅安装浏览器（镜像自带多数系统依赖）
+      run: npx playwright install --with-deps chromium || npx playwright install chromium
 
     - name: Run E2E tests
       run: yarn test:e2e
