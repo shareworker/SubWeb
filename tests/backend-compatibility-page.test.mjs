@@ -57,7 +57,7 @@ function createReactivePage() {
   return vm
 }
 
-test('切换后端类型时恢复各后端上次选择的客户端，并去掉 SCE 来源前缀', async () => {
+test('切换后端类型时恢复各后端上次选择的客户端，并保留 SCE 来源前缀', async () => {
   const vm = createReactivePage()
   vm.backendInfo = { family: 'sce', version: 'SubConverter-Extended v1.11.4' }
   await nextTick()
@@ -67,11 +67,14 @@ test('切换后端类型时恢复各后端上次选择的客户端，并去掉 S
   vm.backendTypeOverride = 'legacy'
   await nextTick()
   assert.equal(vm.form.clientType, 'clash', 'legacy 没有 stash，回到 legacy 上次的选择')
-  assert.equal(vm.form.sourceSubUrl, 'https://source.example/A', '离开 SCE 时去掉前缀')
+  assert.equal(vm.form.sourceSubUrl, 'tag:HK,interval:300,https://source.example/A', '离开 SCE 时表单保留前缀')
+  const { url } = vm.buildSubUrl()
+  assert.equal(new URL(url).searchParams.get('url'), 'https://source.example/A', '传统后端生成时去掉前缀')
 
   vm.backendTypeOverride = ''
   await nextTick()
   assert.equal(vm.form.clientType, 'stash', '回到 SCE 时恢复 stash')
+  assert.equal(vm.form.sourceSubUrl, 'tag:HK,interval:300,https://source.example/A', '回到 SCE 时前缀仍在')
 })
 
 test('导入链接切换后端类型时保留链接自身的 target', async () => {

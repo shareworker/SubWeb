@@ -609,11 +609,7 @@ export default {
       } else if (!targets.includes(this.form.clientType)) {
         this.form.clientType = targets.includes(CONSTANTS.DEFAULT_CLIENT_TYPE) ? CONSTANTS.DEFAULT_CLIENT_TYPE : targets[0];
       }
-      // 来源前缀只有 SubConverter-Extended 识别，离开时去掉以免传统后端解析失败
-      if (previous === BACKEND_TYPES.SCE) {
-        const items = parseSourceItems(this.form.sourceSubUrl);
-        if (hasSourceModifiers(items)) this.form.sourceSubUrl = serializePlainSourceItems(items);
-      }
+      // 来源前缀保留在表单中，传统后端在生成链接时过滤（见 buildSubUrl）
     },
 
     sourceEditorActive(active) {
@@ -708,6 +704,10 @@ export default {
           const sources = serializeSourceItems(items, this.form.clientType, this.sourceProviderMode)
           form = { ...this.form, sourceSubUrl: sources }
         }
+      } else {
+        // 来源前缀只有 SubConverter-Extended 识别，传统后端生成时去掉
+        const items = parseSourceItems(this.form.sourceSubUrl)
+        if (hasSourceModifiers(items)) form = { ...this.form, sourceSubUrl: serializePlainSourceItems(items) }
       }
       const url = this.makeUrl(form, this.advanced, this.customParams, this.backendType)
       return url ? { url } : { error: "订阅链接与客户端为必填项" }
