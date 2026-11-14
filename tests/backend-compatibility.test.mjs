@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, test } from 'node:test'
@@ -241,12 +241,141 @@ test('emoji 设置后禁用 Emoji 细节参数', () => {
   assert.equal(sceParams.isEmojiDetailDisabled(sce, 'udp'), false)
 })
 
+test('原样中转：生成 /sub-proxy 链接并解析往返', () => {
+  const RELAY = BACKEND_TYPES.RELAY
+  const form = createSubscriptionForm()
+  form.customBackend = 'https://relay.example'
+  form.sourceSubUrl = 'https://src.example/uuid/sub?target=vg'
+
+  const url = makeUrl(form, '2', [], RELAY)
+  const parsed = new URL(url)
+  assert.equal(parsed.origin + parsed.pathname, 'https://relay.example/sub-proxy')
+  assert.equal(parsed.searchParams.get('url'), 'https://src.example/uuid/sub?target=vg')
+  assert.equal(parsed.searchParams.get('target'), null, '不携带转换参数')
+
+  // 多条来源或节点链接被拒绝
+  form.sourceSubUrl = 'https://a.example\nhttps://b.example'
+  assert.equal(makeUrl(form, '2', [], RELAY), '')
+  form.sourceSubUrl = 'ss://node'
+  assert.equal(makeUrl(form, '2', [], RELAY), '')
+
+  const result = parseUrl(url, RELAY)
+  assert.equal(result.success, true)
+  assert.equal(result.form.sourceSubUrl, 'https://src.example/uuid/sub?target=vg')
+  assert.equal(result.form.customBackend, 'https://relay.example')
+  // 即使按 legacy 解析，/sub-proxy 路径也自动走中转分支
+  const detected = parseUrl(url, LEGACY)
+  assert.equal(detected.success, true)
+  assert.equal(detected.form.sourceSubUrl, 'https://src.example/uuid/sub?target=vg')
+})
+
+test('原样中转：中转地址残留转换后端路径时先剥掉', () => {
+  const RELAY = BACKEND_TYPES.RELAY
+  const form = createSubscriptionForm()
+  form.sourceSubUrl = 'https://src.example/uuid/sub?target=vg'
+  for (const backend of ['https://relay.example/sub?', 'https://relay.example/sub', 'https://relay.example/?']) {
+    form.customBackend = backend
+    const parsed = new URL(makeUrl(form, '2', [], RELAY))
+    assert.equal(parsed.origin + parsed.pathname, 'https://relay.example/sub-proxy', backend)
+  }
+  // 带路径的中转基址解析回填后生成地址不变
+  const parsed = parseUrl('https://relay.example/gw/sub-proxy?url=https%3A%2F%2Fsrc.example%2Fa', RELAY)
+  assert.equal(parsed.form.customBackend, 'https://relay.example/gw')
+  assert.equal(new URL(makeUrl(parsed.form, '2', [], RELAY)).pathname, '/gw/sub-proxy')
+})
+
+// 运行入口脚本生成 sub-proxy.inc / config.js，返回生成产物
+function generateProxyInc(env) {
+  const dir = mkdtempSync(join(tmpdir(), 'subweb-proxy-'))
+  const output = join(dir, 'config.js').replace(/\\/g, '/')
+  const inc = join(dir, 'sub-proxy.inc').replace(/\\/g, '/')
+  const script = readFileSync('docker/40-subweb-config.sh', 'utf8')
+    .replace('/usr/share/nginx/html/config.js', output)
+    .replace('/etc/nginx/conf.d/sub-proxy.inc', inc)
+  writeFileSync(join(dir, 'entry.sh'), script)
+  execFileSync('sh', [join(dir, 'entry.sh').replace(/\\/g, '/')], { env: { PATH: process.env.PATH, ...env } })
+  return { conf: existsSync(inc) ? readFileSync(inc, 'utf8') : null, configJs: readFileSync(output, 'utf8') }
+}
+
+test('Docker 运行时配置：设置 token 后生成 /sub-proxy 端点', () => {
+  const { conf } = generateProxyInc({ VITE_SUB_PROXY_TOKEN: 's3cr3t', VITE_SUB_PROXY_ALLOW: 'vercel.app,example.com' })
+  assert.match(conf, /proxy_pass \$arg_url;/)
+  assert.match(conf, /s3cr3t/)
+  assert.match(conf, /\(\[\^\/\]\*\\\.\)\?\(vercel\\\.app\|example\\\.com\)/, '白名单域名转义后按后缀匹配写入 inc')
+  assert.match(conf, /proxy_hide_header Set-Cookie;/)
+  assert.match(conf, /proxy_set_header Cookie "";/)
+  assert.match(conf, /resolver 223\.5\.5\.5 1\.1\.1\.1/, '固定公网 DNS，不走容器内 DNS')
+  assert.match(conf, /proxy_cache_key "\$request_method \$arg_url";/, '缓存按方法隔离')
+})
+
+test('/sub-proxy 封禁规则行为：放行外部源，拒绝内网与递归', () => {
+  const { conf } = generateProxyInc({ VITE_SUB_PROXY_TOKEN: 's3cr3t', VITE_SUB_PROXY_ALLOW: 'vercel.app,example.com' })
+  const rules = [...conf.matchAll(/if \(\$arg_url (!?)~\* "([^"]+)"\) \{ return \d+; \}/g)]
+  const requires = rules.filter(r => r[1] === '!').map(r => new RegExp(r[2], 'i'))
+  const denies = rules.filter(r => r[1] !== '!').map(r => new RegExp(r[2], 'i'))
+  assert.ok(requires.length >= 2 && denies.length >= 3)
+  const accepted = u => requires.every(r => r.test(u)) && !denies.some(r => r.test(u))
+
+  for (const u of ['https://vercel.app/a', 'https://x.vercel.app/a', 'https://example.com/sub?x=1']) {
+    assert.ok(accepted(u), `应放行 ${u}`)
+  }
+  const blocked = [
+    'https://vercel.app.evil.com/a', 'https://notvercel.app/', 'https://other.com/x', // 白名单外
+    'ftp://x/y', 'https://example.com', 'gopher://x/',                                 // 非 http(s) 或无路径
+    'http://10.0.0.1/x', 'http://172.31.0.1/x', 'http://192.168.1.1/x', 'http://127.0.0.1/x',
+    'http://169.254.169.254/latest', 'http://100.64.0.1/x',                            // 私网/链路本地/CGNAT
+    'http://localhost/x', 'http://myurls:8002/x', 'http://myurls.services_default/x',  // 回环/单标签/Docker FQDN
+    'http://host.docker.internal/x', 'http://[0::1]/x', 'http://[2001:db8::1]/x',      // docker 域名/IPv6
+    'http://user@10.0.0.1/x',                                                        // userinfo 也过不了白名单
+    'https://example.com/sub-proxy/inner', 'https://example.com/sub-proxy?a=1', 'https://example.com/sub-proxy' // 自指递归
+  ]
+  for (const u of blocked) {
+    assert.ok(!accepted(u), `应拒绝 ${u}`)
+  }
+})
+
+test('Docker 运行时配置：非法 token 与非法白名单都不启用 /sub-proxy', () => {
+  for (const env of [
+    { VITE_SUB_PROXY_TOKEN: 'bad token$' },
+    { VITE_SUB_PROXY_TOKEN: 'tok', VITE_SUB_PROXY_ALLOW: 'evil(' }
+  ]) {
+    const { conf, configJs } = generateProxyInc(env)
+    assert.equal(conf, null, `非法配置只警告并保留 404 存根: ${JSON.stringify(env)}`)
+    assert.ok(configJs.includes('VITE_SUB_PROXY_TOKEN: ""'), 'config.js 不留已拒绝的 token')
+  }
+})
+
+test('Docker 运行时配置：token=off 显式关闭端点', () => {
+  const { conf, configJs } = generateProxyInc({ VITE_SUB_PROXY_TOKEN: 'off' })
+  assert.equal(conf, null)
+  assert.ok(configJs.includes('VITE_SUB_PROXY_TOKEN: ""'))
+})
+
+test('Docker 运行时配置：token=auto 自动生成并跨启动复用', () => {
+  const stateDir = mkdtempSync(join(tmpdir(), 'subweb-state-'))
+  const state = join(stateDir, 'state', 'token').replace(/\\/g, '/')
+  const env = { VITE_SUB_PROXY_TOKEN: 'auto', SUB_PROXY_TOKEN_STATE: state }
+  const first = generateProxyInc(env)
+  const token = readFileSync(state, 'utf8')
+  assert.match(token, /^[0-9a-f]{32}$/, 'auto 生成 32 位十六进制 token')
+  assert.ok(first.conf.includes(`"${token}"`), 'inc 使用生成的 token')
+  assert.ok(first.configJs.includes(`"${token}"`), 'config.js 同步同一份 token')
+  generateProxyInc(env)
+  assert.equal(readFileSync(state, 'utf8'), token, '重启复用同一 token')
+  // 状态文件损坏时重新生成而不是崩溃
+  writeFileSync(state, 'corrupt!')
+  const regenerated = generateProxyInc(env)
+  assert.match(readFileSync(state, 'utf8'), /^[0-9a-f]{32}$/, '损坏状态被重新生成')
+  assert.notEqual(readFileSync(state, 'utf8'), 'corrupt!')
+  assert.ok(regenerated.conf.includes(readFileSync(state, 'utf8')))
+})
+
 test('Docker 运行时配置中换行分隔的后端预设拆成多项', () => {
   const dir = mkdtempSync(join(tmpdir(), 'subweb-config-'))
-  const output = join(dir, 'config.js')
+  const output = join(dir, 'config.js').replace(/\\/g, '/')
   const script = readFileSync('docker/40-subweb-config.sh', 'utf8').replace('/usr/share/nginx/html/config.js', output)
   writeFileSync(join(dir, 'entry.sh'), script)
-  execFileSync('sh', [join(dir, 'entry.sh')], {
+  execFileSync('sh', [join(dir, 'entry.sh').replace(/\\/g, '/')], {
     env: { PATH: process.env.PATH, VITE_BACKEND_OPTIONS: 'https://one.example/sub?\nhttps://two.example' }
   })
   const window = {}

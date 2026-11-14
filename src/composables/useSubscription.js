@@ -1,6 +1,7 @@
 import { validateForm } from '@/utils/validators'
 import { processSubUrl } from '@/utils/formatters'
 import { BACKEND_TYPES } from '@/config/backend-types'
+import { CONSTANTS } from '@/config/constants'
 import { toUrlSafeBase64, fromUrlSafeBase64 } from '@/utils/base64'
 import {
   SCE_TEXT_PARAMS,
@@ -88,6 +89,19 @@ function isSce(backendType) {
   return backendType === BACKEND_TYPES.SCE
 }
 
+function isRelay(backendType) {
+  return backendType === BACKEND_TYPES.RELAY
+}
+
+/** 判断链接是否指向原样中转端点（/sub-proxy）。 */
+export function isRelayUrl(input) {
+  try {
+    return new URL(input).pathname.replace(/\/+$/, '').endsWith('/sub-proxy')
+  } catch {
+    return false
+  }
+}
+
 function knownParamNames(backendType) {
   const known = new Set(['target', 'url', ...Object.values(sharedStringParams), 'explain', 'groups', 'ruleset', 'new_name'])
   if (isSce(backendType)) {
@@ -108,6 +122,7 @@ function knownParamNames(backendType) {
  */
 export function useSubscription(defaultBackend = '') {
   const makeUrl = (form, advanced, customParams = [], backendType = BACKEND_TYPES.LEGACY) => {
+    if (isRelay(backendType)) return makeRelayUrl(form)
     if (!validateForm(form)) return ''
 
     const backend = form.customBackend || defaultBackend
@@ -158,6 +173,23 @@ export function useSubscription(defaultBackend = '') {
     }
   }
 
+  // 原样中转：不经过转换器，由 /sub-proxy 端点拉取源订阅原样返回；仅支持单条 http(s) 链接
+  const makeRelayUrl = (form) => {
+    const source = processSubUrl(String(form.sourceSubUrl).trim())
+    if (!/^https?:\/\/[^\s|]+$/i.test(source)) return ''
+    // 中转地址可能残留转换后端路径（如预设的 /sub?），先剥掉再拼接端点
+    const base = String(form.customBackend || CONSTANTS.RELAY_BASE ||
+      (typeof location !== 'undefined' ? location.origin : ''))
+      .replace(/\/sub\/?(\?.*)?$/i, '')
+      .replace(/[?&]+$/, '')
+      .replace(/\/+$/, '')
+    if (!base) return ''
+    const params = new URLSearchParams()
+    if (CONSTANTS.RELAY_TOKEN) params.set('token', CONSTANTS.RELAY_TOKEN)
+    params.set('url', source)
+    return `${base}/sub-proxy?${params.toString()}`
+  }
+
   // 只发送当前 target 可用且已填写的参数，未设置的交给后端默认
   const appendSceParams = (params, sce, target) => {
     for (const def of availableSceTextParams(target)) {
@@ -184,6 +216,16 @@ export function useSubscription(defaultBackend = '') {
 
     const params = url.searchParams
     const form = createSubscriptionForm()
+
+    // 原样中转链接：只携带源订阅地址，不解析转换参数
+    if (isRelayUrl(input)) {
+      form.clientType = 'clash'
+      form.sourceSubUrl = params.get('url') || ''
+      form.customBackend = url.origin + url.pathname.replace(/\/?sub-proxy\/?$/i, '')
+      if (!validateForm(form)) return invalid
+      return { success: true, form, customParams: [] }
+    }
+
     form.clientType = params.get('target') || ''
     form.sourceSubUrl = (params.get('url') || '').replace(/\|/g, '\n')
     if (!validateForm(form)) return invalid
