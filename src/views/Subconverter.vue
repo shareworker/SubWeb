@@ -45,14 +45,14 @@
                 <el-input v-else v-model="form.sourceSubUrl" type="textarea" :rows="3"
                   placeholder="支持订阅或ss/ssr/vmess链接，多个链接每行一个或用 | 分隔" @blur="saveSubUrl" />
               </el-form-item>
-              <el-form-item label="客户端:">
+              <el-form-item v-if="!isRelayBackend" label="客户端:">
                 <el-select v-model="form.clientType" style="width: 100%">
                   <el-option v-for="(v, k) in clientTypeOptions" :key="k" :label="k" :value="v"></el-option>
                 </el-select>
               </el-form-item>
 
               <div v-if="advanced === '2'">
-                <el-form-item label="后端地址:">
+                <el-form-item :label="isRelayBackend ? '中转地址:' : '后端地址:'">
                   <el-autocomplete style="width: 100%" v-model="form.customBackend" :fetch-suggestions="backendSearch"
                     placeholder="动动小手，（建议）自行搭建后端服务。例：http://127.0.0.1:25500/sub?">
                     <template #append>
@@ -69,6 +69,11 @@
                     检测到后端为 {{ backendLabels[backendInfo.family] }}，与手动选择的类型不一致
                   </div>
                 </el-form-item>
+                <el-form-item v-if="isRelayBackend" label-width="0px">
+                  <span class="form-hint">原样中转：由中转服务端拉取订阅并原样返回，不经过转换器；仅支持单条 http(s) 订阅链接</span>
+                  <span v-if="!relayTokenConfigured" class="form-hint">未配置 VITE_SUB_PROXY_TOKEN，中转端点未启用，生成的链接将不可用</span>
+                </el-form-item>
+                <div v-if="!isRelayBackend">
                 <el-form-item label="远程配置:">
                   <el-select v-model="form.remoteConfig" allow-create filterable placeholder="请选择" style="width: 100%">
                     <el-option-group v-for="group in options.remoteConfig" :key="group.label" :label="group.label">
@@ -170,6 +175,7 @@
                     </el-popover>
                   </el-row>
                 </el-form-item>
+                </div>
               </div>
 
               <div style="margin-top: 50px"></div>
@@ -363,7 +369,7 @@ import { validateSceParams } from '@/utils/validators';
 
 // 导入Composables
 import { useSubscriptionForm, addCustomParam, saveSubUrl as saveSubscriptionUrl } from '@/composables/useSubscriptionForm';
-import { useSubscription } from '@/composables/useSubscription';
+import { useSubscription, isRelayUrl } from '@/composables/useSubscription';
 import { useGeneratedLinks } from '@/composables/useGeneratedLinks'
 
 // 导入工具函数
@@ -415,7 +421,6 @@ export default {
       backendInfo: null,
       backendTypeOverride: "",
       backendLabels: BACKEND_LABELS,
-      backendTypeChoices: [BACKEND_TYPES.SCE, BACKEND_TYPES.FEIYANG, BACKEND_TYPES.LEGACY],
       lastClientTypeByFamily: {},
       sourceItems: [createSourceItem()],
       paramsDialogVisible: false,
@@ -481,7 +486,12 @@ export default {
     },
 
     canGenerateUrl() {
+      if (this.isRelayBackend) return this.form.sourceSubUrl.length > 0 && this.relayTokenConfigured;
       return this.form.sourceSubUrl.length > 0 && this.form.clientType;
+    },
+
+    relayTokenConfigured() {
+      return Boolean(CONSTANTS.RELAY_TOKEN);
     },
 
     canImportClash() {
@@ -509,6 +519,17 @@ export default {
       return this.backendType === BACKEND_TYPES.SCE
     },
 
+    isRelayBackend() {
+      return this.backendType === BACKEND_TYPES.RELAY
+    },
+
+    // 未配置中转 token 时隐藏「原样中转」选项，已导入的中转链接仍按 relay 解析
+    backendTypeChoices() {
+      const choices = [BACKEND_TYPES.SCE, BACKEND_TYPES.FEIYANG, BACKEND_TYPES.LEGACY];
+      if (CONSTANTS.RELAY_TOKEN) choices.push(BACKEND_TYPES.RELAY);
+      return choices
+    },
+
     // el-select 把空字符串视为未选择而显示占位符，自动识别用非空哨兵值
     backendTypeModel: {
       get() {
@@ -534,8 +555,8 @@ export default {
 
     backendMismatch() {
       const family = this.backendInfo?.family
-      return Boolean(this.backendTypeOverride && family && family !== BACKEND_TYPES.UNKNOWN &&
-        family !== this.backendTypeOverride)
+      return Boolean(this.backendTypeOverride && this.backendTypeOverride !== BACKEND_TYPES.RELAY &&
+        family && family !== BACKEND_TYPES.UNKNOWN && family !== this.backendTypeOverride)
     },
 
     clientTypeOptions() {
@@ -693,6 +714,9 @@ export default {
     // 返回 { url } 或 { error }，按当前后端类型校验并生成
     buildSubUrl() {
       let form = this.form
+      if (this.isRelayBackend && !/^https?:\/\/[^\s|]+$/i.test(this.form.sourceSubUrl.trim().replace(/\r?\n/g, '|'))) {
+        return { error: '原样中转只支持单条 http(s) 订阅链接' }
+      }
       if (this.isSceBackend) {
         this.syncSourceItemsFromForm()
         const error = validateSceParams(this.form.sce, this.form.clientType)
@@ -827,12 +851,22 @@ export default {
       if (this.parsing) return
       this.parsing = true
       try {
-        const url = await ShortUrlService.resolveUrl(this.loadConfig)
-        // 先识别链接所指后端，再按对应规则解析参数
-        const info = this.parseUrl(url).success ? await BackendService.probeBackend(this.$axios, url) : null
-        // 探测失败时保留当前后端类型，避免把 SCE 链接按 legacy 规则误解析
-        const backendType = this.backendTypeOverride ||
-          (info ? effectiveBackendType(info.family) : this.backendType)
+        // 中转链接本身就是最终地址，无需短链解析（跨域时 resolveUrl 的探测性 fetch 也会失败）
+        const url = isRelayUrl(this.loadConfig)
+          ? this.loadConfig
+          : await ShortUrlService.resolveUrl(this.loadConfig)
+        let info = null
+        let backendType = this.backendTypeOverride
+        if (isRelayUrl(url)) {
+          // 原样中转链接无需探测后端，直接按 relay 规则解析
+          backendType = BACKEND_TYPES.RELAY
+          this.backendTypeOverride = backendType
+        } else {
+          // 先识别链接所指后端，再按对应规则解析参数
+          info = this.parseUrl(url).success ? await BackendService.probeBackend(this.$axios, url) : null
+          // 探测失败时保留当前后端类型，避免把 SCE 链接按 legacy 规则误解析
+          backendType = backendType || (info ? effectiveBackendType(info.family) : this.backendType)
+        }
         const result = this.parseUrl(url, backendType)
         if (!result.success) {
           this.$message.error(result.message)
@@ -873,6 +907,7 @@ export default {
     },
 
     async probeBackend() {
+      if (this.isRelayBackend) return;
       const backend = this.form.customBackend || CONSTANTS.DEFAULT_BACKEND;
       if (!backend || backend === this.probedBackend) return;
       this.probedBackend = backend;

@@ -64,7 +64,12 @@ src/
 └── icons/
     └── index.js                 # Registers the global svg-icon component
 services/                        # Docker Compose stack (subweb + myurls + redis)
-docker/                          # 40-subweb-config.sh (runtime config generation)
+docker/                          # 40-subweb-config.sh (runtime config generation), sub-proxy.inc stub
+                                 # nginx.conf includes /etc/nginx/conf.d/sub-proxy.inc — when
+                                 # VITE_SUB_PROXY_TOKEN is set the entrypoint rewrites it into a
+                                 # token-gated relay endpoint GET /sub-proxy?token=&url=<encoded source>;
+                                 # token charset is restricted to [A-Za-z0-9_-] and VITE_SUB_PROXY_ALLOW
+                                 # optionally restricts the fetchable upstream hosts
 public/config.js                 # Runtime config placeholder served before the app
 e2e/                             # Playwright specs: workflows, render completeness, desktop/mobile layout; config.js is replaced and every API is stubbed with page.route
 ```
@@ -77,6 +82,7 @@ Values come from `getRuntimeConfig` in `runtime.js`, which prefers `window.__SUB
 - `USE_STORAGE` / `CACHE_TTL` — parsed from `VITE_USE_STORAGE` / `VITE_CACHE_TTL`
 - `DEFAULT_CLIENT_TYPE` — hardcoded `'clash'`
 - `SHORT_URL_API`, `CONFIG_UPLOAD_API`, `PROJECT`, `BOT_LINK`, etc.
+- `RELAY_BASE` / `RELAY_TOKEN` — from `VITE_SUB_PROXY_BASE` / `VITE_SUB_PROXY_TOKEN`; used when the backend type is `relay` (原样中转). `makeUrl` then emits `<base>/sub-proxy?token=&url=` instead of a converter URL; empty base falls back to `location.origin`. The token is embedded in `config.js` and therefore visible to any visitor of the SPA — it only gates blind callers, so optionally set `VITE_SUB_PROXY_ALLOW` (comma-separated source host suffixes, entrypoint/nginx-only, never written to `config.js`) to restrict which upstream hosts the endpoint will fetch. Setting `VITE_SUB_PROXY_TOKEN=auto` makes the entrypoint generate a random token persisted at `SUB_PROXY_TOKEN_STATE` (default `/var/lib/sub-web/token`) — without a volume there it rotates on container recreate, invalidating existing relay links
 
 ### `src/composables/useSubscriptionForm.js`
 Returns a plain object merged into `data()` via spread. Form defaults come from `createSubscriptionForm()` in `useSubscription.js`. Default mode is advanced (`advanced: '2'`). `form.udp` is `null` when unspecified, or `true`/`false` when explicitly set.

@@ -10,6 +10,7 @@ export const BACKEND_TYPES = Object.freeze({
   SCE: 'sce',
   FEIYANG: 'feiyang',
   LEGACY: 'legacy',
+  RELAY: 'relay',
   UNKNOWN: 'unknown'
 })
 
@@ -17,6 +18,7 @@ export const BACKEND_LABELS = Object.freeze({
   sce: 'SubConverter-Extended',
   feiyang: '肥羊增强后端',
   legacy: '原版 subconverter',
+  relay: '原样中转',
   unknown: '未识别'
 })
 

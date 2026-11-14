@@ -35,6 +35,9 @@ export const CONSTANTS = {
   BACKEND_OPTIONS: parseBackendOptions(getRuntimeConfig('VITE_BACKEND_OPTIONS', env.VITE_BACKEND_OPTIONS)),
   SHORT_URL_API: getRuntimeConfig('VITE_MYURLS_API', env.VITE_MYURLS_API),
   CONFIG_UPLOAD_API: getRuntimeConfig('VITE_CONFIG_UPLOAD_API', env.VITE_CONFIG_UPLOAD_API),
+  // 原样中转：/sub-proxy 端点的部署地址（留空时取页面同源）与访问令牌
+  RELAY_BASE: getRuntimeConfig('VITE_SUB_PROXY_BASE', env.VITE_SUB_PROXY_BASE),
+  RELAY_TOKEN: getRuntimeConfig('VITE_SUB_PROXY_TOKEN', env.VITE_SUB_PROXY_TOKEN),
   BOT_LINK: getRuntimeConfig('VITE_BOT_LINK', env.VITE_BOT_LINK),
   USE_STORAGE: getRuntimeConfig('VITE_USE_STORAGE', env.VITE_USE_STORAGE) === 'true',
   CACHE_TTL: Number(getRuntimeConfig('VITE_CACHE_TTL', env.VITE_CACHE_TTL)) || 3600,
