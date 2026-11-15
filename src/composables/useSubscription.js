@@ -93,10 +93,11 @@ function isRelay(backendType) {
   return backendType === BACKEND_TYPES.RELAY
 }
 
-/** 判断链接是否指向原样中转端点（/sub-proxy）。 */
+/** 判断链接是否指向原样中转端点（/sub-proxy 或 /sub-proxy/<编码源地址>）。 */
 export function isRelayUrl(input) {
   try {
-    return new URL(input).pathname.replace(/\/+$/, '').endsWith('/sub-proxy')
+    // 末段必须是编码后的 http(s) 源（encodeURIComponent 保留 https 字面量），避免误判普通路径
+    return /\/sub-proxy(?:$|\/https?)/i.test(new URL(input).pathname)
   } catch {
     return false
   }
@@ -176,7 +177,8 @@ export function useSubscription(defaultBackend = '') {
   // 原样中转：不经过转换器，由 /sub-proxy 端点拉取源订阅原样返回；仅支持单条 http(s) 链接
   const makeRelayUrl = (form) => {
     const source = processSubUrl(String(form.sourceSubUrl).trim())
-    if (!/^https?:\/\/[^\s|]+$/i.test(source)) return ''
+    // 与端点一致要求 scheme://host/ 开头（无路径的 https://host 会被 400）
+    if (!/^https?:\/\/[^\s|]*\/[^\s|]*$/i.test(source)) return ''
     // 中转地址可能残留转换后端路径（如预设的 /sub?），先剥掉再拼接端点
     const base = String(form.customBackend || CONSTANTS.RELAY_BASE ||
       (typeof location !== 'undefined' ? location.origin : ''))
@@ -184,10 +186,11 @@ export function useSubscription(defaultBackend = '') {
       .replace(/[?&]+$/, '')
       .replace(/\/+$/, '')
     if (!base) return ''
+    // 源地址编入路径段：nginx 只解码请求 URI，$arg_* 查询参数不解码，编码源放进 url= 会被 400
     const params = new URLSearchParams()
     if (CONSTANTS.RELAY_TOKEN) params.set('token', CONSTANTS.RELAY_TOKEN)
-    params.set('url', source)
-    return `${base}/sub-proxy?${params.toString()}`
+    const query = params.toString()
+    return `${base}/sub-proxy/${encodeURIComponent(source)}${query ? '?' + query : ''}`
   }
 
   // 只发送当前 target 可用且已填写的参数，未设置的交给后端默认
@@ -220,8 +223,18 @@ export function useSubscription(defaultBackend = '') {
     // 原样中转链接：只携带源订阅地址，不解析转换参数
     if (isRelayUrl(input)) {
       form.clientType = 'clash'
-      form.sourceSubUrl = params.get('url') || ''
-      form.customBackend = url.origin + url.pathname.replace(/\/?sub-proxy\/?$/i, '')
+      const m = url.pathname.match(/^(.*?)\/sub-proxy(?:\/(.*))?$/i)
+      form.customBackend = url.origin + m[1]
+      if (m[2]) {
+        try {
+          form.sourceSubUrl = decodeURIComponent(m[2])
+        } catch {
+          return invalid
+        }
+      } else {
+        // 兼容旧版 ?url= 形式
+        form.sourceSubUrl = params.get('url') || ''
+      }
       if (!validateForm(form)) return invalid
       return { success: true, form, customParams: [] }
     }
