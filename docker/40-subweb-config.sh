@@ -72,21 +72,35 @@ EOF
 # resolver 固定公网 DNS：词法封禁挡不住"域名解析到内网"（如 compose 网络的 <svc>.<net> 这类
 # 带点 FQDN、host.docker.internal），而中转目标按设计只有外部源，不需要容器内 DNS。
 # 残余面：公网域名故意指向私网 IP（rebinding）无法在纯 nginx 内拦截
+#
+# 源订阅地址编进路径段而不是 url 查询参数：nginx 的 $arg_* 是未解码的原始串（编码值
+# 过不了 ^https?:// 校验），只有请求 URI 路径会解码一次；且内部重定向不会再解码，所以
+# 必须直接在请求路径里携带编码值。merge_slashes off 保住解码后 https:// 的双斜线——
+# 解码出的斜线会重新进入合并判断，默认配置下 https:// 会被压成 https:/。副作用：路径中
+# 的 . 与 .. 段按 RFC 归一化，等价于客户端/上游通常的做法
 if [ -n "${VITE_SUB_PROXY_TOKEN:-}" ]; then
 cat > /etc/nginx/conf.d/sub-proxy.inc <<EOF
-location = /sub-proxy {
+merge_slashes off;
+location ~ "^/sub-proxy/?$" {
+    limit_except GET HEAD { deny all; }
+    # 旧版 ?url= 链接迁移到路径形式（% 在 302 Location 中不转义，编码原样保留）
+    if (\$arg_url != "") { return 302 "/sub-proxy/\$arg_url?token=\$arg_token"; }
+    return 400;
+}
+location ~ "^/sub-proxy/(?<u>.+)$" {
     limit_except GET HEAD { deny all; }
     if (\$arg_token != "$(escape "${VITE_SUB_PROXY_TOKEN}")") { return 403; }
-    if (\$arg_url !~* "^https?://[^/]+/") { return 400; }
-    if (\$arg_url ~* "[\\x00-\\x20]") { return 400; }
+    if (\$u !~* "^https?://[^/]+/") { return 400; }
+    if (\$u ~* "[\\x00-\\x20]") { return 400; }
     # 只中转外部源：硬封回环、私网、链路本地（含云元数据 169.254）、CGNAT/Tailscale、
-    # 单标签主机名（容器服务名）、Docker 内部域名、全部 IPv6 字面量；自指 /sub-proxy 递归亦拒绝
-    if (\$arg_url ~* "^https?://(localhost|[^./]+[:/]|0\.|10\.|127\.|169\.254\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.|100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.|host\.docker\.internal|gateway\.docker\.internal|\[)") { return 400; }
-    if (\$arg_url ~* "/sub-proxy(\?|/|$)") { return 400; }
-$(if [ -n "$PROXY_ALLOW" ]; then printf '    if ($arg_url !~* "^https?://([^/]*\\.)?(%s)([/:]|$)") { return 403; }\n' "$PROXY_ALLOW"; fi)
+    # 单标签主机名（容器服务名）、Docker 内部域名、全部 IPv6 字面量；自指 /sub-proxy 递归亦拒绝。
+    # IP 各段允许前导 0（ngx_inet_addr 按十进制解析，0127 就是 127），封禁前缀须带 0* 容忍
+    if (\$u ~* "^https?://(localhost|[^./]+[:/]|0*0\.|0*10\.|0*127\.|0*169\.0*254\.|0*192\.0*168\.|0*172\.0*(1[6-9]|2[0-9]|3[01])\.|0*100\.0*(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.|host\.docker\.internal|gateway\.docker\.internal|\[)") { return 400; }
+    if (\$u ~* "/sub-proxy(\?|/|$)") { return 400; }
+$(if [ -n "$PROXY_ALLOW" ]; then printf '    if ($u !~* "^https?://([^/]*\\.)?(%s)([/:]|$)") { return 403; }\n' "$PROXY_ALLOW"; fi)
     resolver 223.5.5.5 1.1.1.1 ipv6=off valid=300s;
     resolver_timeout 5s;
-    proxy_pass \$arg_url;
+    proxy_pass \$u;
     proxy_http_version 1.1;
     proxy_ssl_server_name on;
     proxy_set_header Connection "";
@@ -98,7 +112,7 @@ $(if [ -n "$PROXY_ALLOW" ]; then printf '    if ($arg_url !~* "^https?://([^/]*\
     proxy_read_timeout 90s;
     proxy_max_temp_file_size 16m;
     proxy_cache subweb_proxy;
-    proxy_cache_key "\$request_method \$arg_url";
+    proxy_cache_key "\$request_method \$u";
     proxy_cache_valid 200 10m;
     proxy_cache_lock on;
     proxy_hide_header Set-Cookie;

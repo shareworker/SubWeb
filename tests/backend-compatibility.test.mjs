@@ -12,7 +12,7 @@ after(() => server.close())
 const { BACKEND_TYPES, parseBackendIdentity, formatBackendVersion } = await server.ssrLoadModule('/src/config/backend-types.js')
 const { CLIENT_TYPES, getClientTypes } = await server.ssrLoadModule('/src/config/client-types.js')
 const { toUrlSafeBase64, fromUrlSafeBase64 } = await server.ssrLoadModule('/src/utils/base64.js')
-const { useSubscription, createSubscriptionForm, createSceParams } = await server.ssrLoadModule('/src/composables/useSubscription.js')
+const { useSubscription, createSubscriptionForm, createSceParams, isRelayUrl } = await server.ssrLoadModule('/src/composables/useSubscription.js')
 const modifiers = await server.ssrLoadModule('/src/utils/sourceModifiers.js')
 const sceParams = await server.ssrLoadModule('/src/config/sce-params.js')
 const { validateSceParams } = await server.ssrLoadModule('/src/utils/validators.js')
@@ -249,8 +249,10 @@ test('原样中转：生成 /sub-proxy 链接并解析往返', () => {
 
   const url = makeUrl(form, '2', [], RELAY)
   const parsed = new URL(url)
-  assert.equal(parsed.origin + parsed.pathname, 'https://relay.example/sub-proxy')
-  assert.equal(parsed.searchParams.get('url'), 'https://src.example/uuid/sub?target=vg')
+  // 源地址编入路径段（nginx 不解码 $arg_*，url= 形式会被端点 400）
+  assert.equal(parsed.pathname, `/sub-proxy/${encodeURIComponent('https://src.example/uuid/sub?target=vg')}`)
+  assert.equal(decodeURIComponent(parsed.pathname.replace('/sub-proxy/', '')), 'https://src.example/uuid/sub?target=vg')
+  assert.equal(parsed.searchParams.get('url'), null, '不再携带 url 查询参数')
   assert.equal(parsed.searchParams.get('target'), null, '不携带转换参数')
 
   // 多条来源或节点链接被拒绝
@@ -269,6 +271,27 @@ test('原样中转：生成 /sub-proxy 链接并解析往返', () => {
   assert.equal(detected.form.sourceSubUrl, 'https://src.example/uuid/sub?target=vg')
 })
 
+test('isRelayUrl 只识别中转端点，避免误判普通路径', () => {
+  for (const ok of [
+    'https://relay.example/sub-proxy',
+    'https://relay.example/sub-proxy/https%3A%2F%2Fsrc.example%2Fa?token=t',
+    'https://relay.example/gw/sub-proxy/https%3A%2F%2Fsrc.example%2Fa',
+    'https://relay.example/sub-proxy/http%3A%2F%2Fsrc.example%2Fa'
+  ]) {
+    assert.equal(isRelayUrl(ok), true, ok)
+  }
+  for (const bad of [
+    'https://relay.example/',
+    'https://relay.example/sub-proxy/',
+    'https://relay.example/sub-proxy/feed',        // 路径中段含 sub-proxy 但尾段非编码源
+    'https://relay.example/api/sub-proxy/x',
+    'https://relay.example/subproxy/x',
+    'not a url'
+  ]) {
+    assert.equal(isRelayUrl(bad), false, bad)
+  }
+})
+
 test('原样中转：中转地址残留转换后端路径时先剥掉', () => {
   const RELAY = BACKEND_TYPES.RELAY
   const form = createSubscriptionForm()
@@ -276,12 +299,19 @@ test('原样中转：中转地址残留转换后端路径时先剥掉', () => {
   for (const backend of ['https://relay.example/sub?', 'https://relay.example/sub', 'https://relay.example/?']) {
     form.customBackend = backend
     const parsed = new URL(makeUrl(form, '2', [], RELAY))
-    assert.equal(parsed.origin + parsed.pathname, 'https://relay.example/sub-proxy', backend)
+    assert.equal(parsed.pathname.startsWith('/sub-proxy/'), true, backend)
   }
-  // 带路径的中转基址解析回填后生成地址不变
-  const parsed = parseUrl('https://relay.example/gw/sub-proxy?url=https%3A%2F%2Fsrc.example%2Fa', RELAY)
+  // 旧版 ?url= 形式仍可导入；带路径的中转基址解析回填后生成地址不变
+  const legacy = parseUrl('https://relay.example/gw/sub-proxy?url=https%3A%2F%2Fsrc.example%2Fa', RELAY)
+  assert.equal(legacy.success, true)
+  assert.equal(legacy.form.sourceSubUrl, 'https://src.example/a')
+  assert.equal(legacy.form.customBackend, 'https://relay.example/gw')
+  assert.equal(new URL(makeUrl(legacy.form, '2', [], RELAY)).pathname, '/gw/sub-proxy/https%3A%2F%2Fsrc.example%2Fa')
+  // 新版路径形式导入
+  const parsed = parseUrl('https://relay.example/gw/sub-proxy/https%3A%2F%2Fsrc.example%2Fa?token=t', RELAY)
+  assert.equal(parsed.success, true)
+  assert.equal(parsed.form.sourceSubUrl, 'https://src.example/a')
   assert.equal(parsed.form.customBackend, 'https://relay.example/gw')
-  assert.equal(new URL(makeUrl(parsed.form, '2', [], RELAY)).pathname, '/gw/sub-proxy')
 })
 
 // 运行入口脚本生成 sub-proxy.inc / config.js，返回生成产物
@@ -299,18 +329,21 @@ function generateProxyInc(env) {
 
 test('Docker 运行时配置：设置 token 后生成 /sub-proxy 端点', () => {
   const { conf } = generateProxyInc({ VITE_SUB_PROXY_TOKEN: 's3cr3t', VITE_SUB_PROXY_ALLOW: 'vercel.app,example.com' })
-  assert.match(conf, /proxy_pass \$arg_url;/)
+  assert.match(conf, /merge_slashes off;/, '路径解码后的 https:// 双斜线不能被合并')
+  assert.match(conf, /location ~ "\^\/sub-proxy\/\(\?<u>\.\+\)\$"/, '源地址从路径捕获为 $u')
+  assert.match(conf, /return 302 "\/sub-proxy\/\$arg_url\?token=\$arg_token";/, '旧版 ?url= 链接重定向到路径形式')
+  assert.match(conf, /proxy_pass \$u;/)
   assert.match(conf, /s3cr3t/)
-  assert.match(conf, /\(\[\^\/\]\*\\\.\)\?\(vercel\\\.app\|example\\\.com\)/, '白名单域名转义后按后缀匹配写入 inc')
+  assert.match(conf, /if \(\$u !~\* "\^https\?:\/\/\(\[\^\/\]\*\\\.\)\?\(vercel\\\.app\|example\\\.com\)/, '白名单域名转义后按后缀匹配写入 inc')
   assert.match(conf, /proxy_hide_header Set-Cookie;/)
   assert.match(conf, /proxy_set_header Cookie "";/)
   assert.match(conf, /resolver 223\.5\.5\.5 1\.1\.1\.1/, '固定公网 DNS，不走容器内 DNS')
-  assert.match(conf, /proxy_cache_key "\$request_method \$arg_url";/, '缓存按方法隔离')
+  assert.match(conf, /proxy_cache_key "\$request_method \$u";/, '缓存按方法隔离')
 })
 
 test('/sub-proxy 封禁规则行为：放行外部源，拒绝内网与递归', () => {
   const { conf } = generateProxyInc({ VITE_SUB_PROXY_TOKEN: 's3cr3t', VITE_SUB_PROXY_ALLOW: 'vercel.app,example.com' })
-  const rules = [...conf.matchAll(/if \(\$arg_url (!?)~\* "([^"]+)"\) \{ return \d+; \}/g)]
+  const rules = [...conf.matchAll(/if \(\$u (!?)~\* "([^"]+)"\) \{ return \d+; \}/g)]
   const requires = rules.filter(r => r[1] === '!').map(r => new RegExp(r[2], 'i'))
   const denies = rules.filter(r => r[1] !== '!').map(r => new RegExp(r[2], 'i'))
   assert.ok(requires.length >= 2 && denies.length >= 3)
@@ -327,6 +360,8 @@ test('/sub-proxy 封禁规则行为：放行外部源，拒绝内网与递归', 
     'http://localhost/x', 'http://myurls:8002/x', 'http://myurls.services_default/x',  // 回环/单标签/Docker FQDN
     'http://host.docker.internal/x', 'http://[0::1]/x', 'http://[2001:db8::1]/x',      // docker 域名/IPv6
     'http://user@10.0.0.1/x',                                                        // userinfo 也过不了白名单
+    'http://0127.0.0.1/x', 'http://010.0.0.1/x', 'http://0172.18.0.2/x',             // 前导零 IP：ngx_inet_addr 按十进制解析
+    'http://0169.254.169.254/x', 'http://0192.168.1.1/x', 'http://00.0.0.0/x',      // 前导零私网/链路本地/通配
     'https://example.com/sub-proxy/inner', 'https://example.com/sub-proxy?a=1', 'https://example.com/sub-proxy' // 自指递归
   ]
   for (const u of blocked) {
